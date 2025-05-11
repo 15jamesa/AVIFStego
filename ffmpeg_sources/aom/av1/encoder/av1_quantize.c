@@ -10,6 +10,9 @@
  */
 
 #include <math.h>
+#include <stdio.h>
+#include <julia.h>
+#include <stdint.h>
 
 #include "config/aom_dsp_rtcd.h"
 
@@ -35,13 +38,24 @@ void av1_quantize_skip(intptr_t n_coeffs, tran_low_t *qcoeff_ptr,
   *eob_ptr = 0;
 }
 
+jl_value_t *my_eval_string(char *s){
+  jl_value_t *jp = jl_eval_string(s);
+  if (jl_exception_occurred()){
+    printf("%s\n  exception: %s\n", s, jl_typeof_str(jl_exception_occurred()));
+  }
+  if (!jp) {
+    printf("'%s' failed\n", s);
+    exit(1);
+   }
+}
+
 int av1_quantize_fp_no_qmatrix(const int16_t quant_ptr[2],
                                const int16_t dequant_ptr[2],
                                const int16_t round_ptr[2], int log_scale,
                                const int16_t *scan, int coeff_count,
                                const tran_low_t *coeff_ptr,
                                tran_low_t *qcoeff_ptr,
-                               tran_low_t *dqcoeff_ptr) {
+                               tran_low_t *dqcoeff_ptr) {                           
   memset(qcoeff_ptr, 0, coeff_count * sizeof(*qcoeff_ptr));
   memset(dqcoeff_ptr, 0, coeff_count * sizeof(*dqcoeff_ptr));
   const int rounding[2] = { ROUND_POWER_OF_TWO(round_ptr[0], log_scale),
@@ -59,6 +73,7 @@ int av1_quantize_fp_no_qmatrix(const int16_t quant_ptr[2],
       tmp32 = (int)((abs_coeff * quant_ptr[rc != 0]) >> (16 - log_scale));
       if (tmp32) {
         qcoeff_ptr[rc] = (tmp32 ^ coeff_sign) - coeff_sign;
+        printf("qcoeff: %d \n", qcoeff_ptr[rc]);
         const tran_low_t abs_dqcoeff =
             (tmp32 * dequant_ptr[rc != 0]) >> log_scale;
         dqcoeff_ptr[rc] = (abs_dqcoeff ^ coeff_sign) - coeff_sign;
@@ -66,6 +81,57 @@ int av1_quantize_fp_no_qmatrix(const int16_t quant_ptr[2],
     }
     if (tmp32) eob = i + 1;
   }
+   //START OF JULIA EMBEDDING 
+  jl_init();
+  my_eval_string("include(\"/home/avajames/ffmpeg_sources/stego/syndrometrellis-code/STC.jl\")");
+  my_eval_string("using .STC");
+
+  jl_sym_t* stc_module_symbol = jl_symbol("STC");
+  jl_module_t* stc_module = (jl_module_t*)jl_get_global(jl_main_module, stc_module_symbol);
+  jl_function_t *get_h_hat = jl_get_function(stc_module, "generate_h_hat");
+
+  //jl_array_t *h_hat = (jl_array_t*) jl_call2(get_h_hat, jl_box_int64(7), jl_box_int64(4));
+
+  int64_t h[] = {3,2};
+  int64_t *h_ptr = (int64_t*)malloc(sizeof(int64_t)*4);
+  memcpy(h_ptr, h, sizeof(int64_t) * 2);
+
+  int64_t m[] = {0, 1, 1, 1};
+  int64_t *m_ptr = (int64_t*)malloc(sizeof(int64_t)*4);
+  memcpy(m_ptr, m, sizeof(int64_t) * 4);
+
+  int64_t x[] = {1, 0, 1, 1, 0, 0, 0, 1};
+  int64_t *x_ptr = (int64_t*)malloc(sizeof(int64_t)*8);
+  memcpy(x_ptr, x, sizeof(int64_t) * 8);
+
+  int64_t rho[] = {1, 1, 1, 1, 1, 1, 1, 1};
+  int64_t *rho_ptr = (int64_t*)malloc(sizeof(int64_t)*8);
+  memcpy(rho_ptr, rho, sizeof(int64_t) * 8);
+
+  jl_value_t* int64_array = jl_apply_array_type((jl_value_t*)jl_int64_type, 1);
+
+  jl_array_t *box_h = jl_ptr_to_array_1d(int64_array, h_ptr, 2, 0);
+  jl_array_t *box_m = jl_ptr_to_array_1d(int64_array, m_ptr, 4, 0);
+  jl_array_t *box_x = jl_ptr_to_array_1d(int64_array, x_ptr, 8, 0);
+  jl_array_t *box_rho = jl_ptr_to_array_1d(int64_array, rho_ptr, 8, 0);
+
+  jl_value_t* stc_inputs[4] = {(jl_value_t*) box_h, (jl_value_t*)box_x, (jl_value_t*)box_m, (jl_value_t*)box_rho};
+
+  jl_function_t *stc_embed = jl_get_function(stc_module, "embed");
+  jl_array_t *box_ret = (jl_array_t*) jl_call(stc_embed, stc_inputs, 4);
+
+  int64_t *ret = jl_array_data(box_ret, int64_t);
+  for(int loop=0;loop<8;loop++){
+    printf("value is %" PRId64 "\n", ret[loop]);
+  }
+
+  free(h_ptr);
+  free(x_ptr);
+  free(m_ptr);
+  free(rho_ptr);
+  jl_atexit_hook(0);
+  exit(1);
+  //END OF JULIA EMBEDDING
   return eob;
 }
 
@@ -87,7 +153,6 @@ static void quantize_fp_helper_c(
 
   memset(qcoeff_ptr, 0, n_coeffs * sizeof(*qcoeff_ptr));
   memset(dqcoeff_ptr, 0, n_coeffs * sizeof(*dqcoeff_ptr));
-
   if (qm_ptr == NULL && iqm_ptr == NULL) {
     *eob_ptr = av1_quantize_fp_no_qmatrix(quant_ptr, dequant_ptr, round_ptr,
                                           log_scale, scan, (int)n_coeffs,
@@ -120,6 +185,47 @@ static void quantize_fp_helper_c(
       if (tmp32) eob = i;
     }
     *eob_ptr = eob + 1;
+     //START OF JULIA EMBEDDING 
+    /*
+    jl_init();
+    my_eval_string("include(\"/home/avajames/ffmpeg_sources/stego/syndrometrellis-code/STC.jl\")");
+    my_eval_string("using .STC");
+
+    jl_sym_t* stc_module_symbol = jl_symbol("STC");
+    jl_module_t* stc_module = (jl_module_t*)jl_get_global(jl_main_module, stc_module_symbol);
+    jl_function_t *get_h_hat = jl_get_function(stc_module, "generate_h_hat");
+
+    jl_array_t *h_hat = (jl_array_t*) jl_call2(get_h_hat, jl_box_int64(7), jl_box_int64(4));
+
+    int64_t m[] = {0, 1, 1, 1};
+    int64_t *m_ptr = (int64_t*)malloc(sizeof(int64_t)*4);
+    memcpy(m_ptr, m, sizeof(int64_t) * 4);
+
+    int64_t x[] = {1, 0, 1, 1, 0, 0, 0, 1};
+    int64_t *x_ptr = (int64_t*)malloc(sizeof(int64_t)*8);
+    memcpy(x_ptr, x, sizeof(int64_t) * 8);
+
+    int64_t rho[] = {1, 1, 1, 1, 1, 1, 1, 1};
+    int64_t *rho_ptr = (int64_t*)malloc(sizeof(int64_t)*8);
+    memcpy(rho_ptr, rho, sizeof(int64_t) * 8);
+
+    jl_value_t* int64_array = jl_apply_array_type((jl_value_t*)jl_int64_type, 1);
+
+    jl_array_t *box_m = jl_ptr_to_array_1d(int64_array, m_ptr, 4, 0);
+    jl_array_t *box_x = jl_ptr_to_array_1d(int64_array, x_ptr, 8, 0);
+    jl_array_t *box_rho = jl_ptr_to_array_1d(int64_array, rho_ptr, 8, 0);
+
+    jl_value_t* stc_inputs[4] = {(jl_value_t*) h_hat, (jl_value_t*)box_x, (jl_value_t*)box_m, (jl_value_t*)box_rho};
+
+    jl_function_t *stc_embed = jl_get_function(stc_module, "embed");
+    jl_array_t *ret = (jl_array_t*) jl_call(stc_embed, stc_inputs, 4);
+
+    free(x_ptr);
+    free(m_ptr);
+    free(rho_ptr);
+    jl_atexit_hook(0);
+    */
+    //END OF JULIA EMBEDDING
   }
 }
 
@@ -139,7 +245,6 @@ static void highbd_quantize_fp_helper_c(
   (void)zbin_ptr;
   (void)quant_shift_ptr;
   (void)iscan;
-
   if (qm_ptr || iqm_ptr) {
     // Quantization pass: All coefficients with index >= zero_flag are
     // skippable. Note: zero_flag can be zero.
@@ -216,6 +321,8 @@ void av1_quantize_lp_c(const int16_t *coeff_ptr, intptr_t n_coeffs,
                        int16_t *qcoeff_ptr, int16_t *dqcoeff_ptr,
                        const int16_t *dequant_ptr, uint16_t *eob_ptr,
                        const int16_t *scan, const int16_t *iscan) {
+  printf("lp_c");  
+  exit(1);
   (void)iscan;
   int eob = -1;
 
@@ -271,7 +378,7 @@ void av1_quantize_fp_facade(const tran_low_t *coeff_ptr, intptr_t n_coeffs,
                             const SCAN_ORDER *sc, const QUANT_PARAM *qparam) {
   const qm_val_t *qm_ptr = qparam->qmatrix;
   const qm_val_t *iqm_ptr = qparam->iqmatrix;
-  if (qm_ptr != NULL && iqm_ptr != NULL) {
+  if ((qm_ptr != NULL && iqm_ptr != NULL) || true) {
     quantize_fp_helper_c(coeff_ptr, n_coeffs, p->zbin_QTX, p->round_fp_QTX,
                          p->quant_fp_QTX, p->quant_shift_QTX, qcoeff_ptr,
                          dqcoeff_ptr, p->dequant_QTX, eob_ptr, sc->scan,
@@ -305,6 +412,7 @@ void av1_quantize_b_facade(const tran_low_t *coeff_ptr, intptr_t n_coeffs,
                            const MACROBLOCK_PLANE *p, tran_low_t *qcoeff_ptr,
                            tran_low_t *dqcoeff_ptr, uint16_t *eob_ptr,
                            const SCAN_ORDER *sc, const QUANT_PARAM *qparam) {
+  exit(1);
   const qm_val_t *qm_ptr = qparam->qmatrix;
   const qm_val_t *iqm_ptr = qparam->iqmatrix;
 #if !CONFIG_REALTIME_ONLY
@@ -387,7 +495,8 @@ static void quantize_dc(const tran_low_t *coeff_ptr, int n_coeffs,
   int eob = -1;
   int32_t tmp32;
   int dequant;
-
+  printf("dc");  
+  exit(1);
   memset(qcoeff_ptr, 0, n_coeffs * sizeof(*qcoeff_ptr));
   memset(dqcoeff_ptr, 0, n_coeffs * sizeof(*dqcoeff_ptr));
 

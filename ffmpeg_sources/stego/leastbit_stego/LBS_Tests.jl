@@ -1,4 +1,4 @@
-include("LBS.jl")
+include("/home/avajames/ffmpeg_sources/stego/leastbit_stego/LBS.jl")
 using .LBS
 using Test
 

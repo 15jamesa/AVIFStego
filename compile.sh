@@ -32,10 +32,8 @@ PATH="$HOME/bin:$PATH" PKG_CONFIG_PATH="$HOME/ffmpeg_build/lib/pkgconfig" ./conf
 PATH="$HOME/bin:$PATH" make clean
 make install
 
-#Help ffmpeg find shared object files 
+#Move back to home directory
 cd ~
-export LD_LIBRARY_PATH="$HOME/ffmpeg_build/lib:$LD_LIBRARY_PATH"
-export LD_LIBRARY_PATH="$HOME/ffmpeg_build/lib:$HOME/.julia/juliaup/julia-1.11.5+0.x64.linux.gnu/lib:$LD_LIBRARY_PATH"
 
 beep
 exit 0

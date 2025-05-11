@@ -1,8 +1,9 @@
 module PixelWeights
 
 using ImageCore, Images, ImageFiltering, ColorTypes, ImageEdgeDetection, FFTW, Statistics, DSP
+using ImageEdgeDetection: Percentile
 
-cd("./Embedding Cost Functions/")
+#cd("../Embedding Cost Functions")
 
 function blurred_noise_calculation(rgb)
     grey = Float64.(Gray.(rgb))
@@ -24,7 +25,7 @@ function colour_sensitivity(rgb)
 end
 
 function canny_edge_detection(img)
-    edges = detect_edges(img, Canny() )
+    edges = detect_edges(RGB.(img), Canny(spatial_scale=1, high=Percentile(90), low=Percentile(70)) )
     weighted = Float64.(Gray.(edges))
 
     return weighted
@@ -95,11 +96,16 @@ function fourier_soft_cutoff_filtering(img)
     return noise
 end
 
-function noise_to_costs(noise)
+function pixel_noise_to_bit_cost(noise)
     max = maximum(noise)
     costs = max .- noise
+    width = size(noise)[1]
+    height = size(noise)[2]
 
-    return costs
+    expanded_costs = [[(128*i) (64*i) (32*i) (16*i) (8*i) (4*i) (2*i) (i)] for i in costs]
+    flatten = reduce(vcat, expanded_costs)
+    flattened = reshape(transpose(flatten), (1,8*width*height))
+    return flattened
 end
 
 end

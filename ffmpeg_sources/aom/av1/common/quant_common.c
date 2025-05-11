@@ -10,6 +10,7 @@
  */
 
 #include "config/aom_config.h"
+#include <stdio.h>
 
 #include "aom/aom_frame_buffer.h"
 #include "aom_scale/yv12config.h"
@@ -233,6 +234,7 @@ int av1_get_qindex(const struct segmentation *seg, int segment_id,
 bool av1_use_qmatrix(const CommonQuantParams *quant_params,
                      const struct macroblockd *xd, int segment_id) {
   // True if explicit Q matrix levels and this is not a lossless segment.
+  bool x = quant_params->using_qmatrix;
   return quant_params->using_qmatrix && !xd->lossless[segment_id];
 }
 

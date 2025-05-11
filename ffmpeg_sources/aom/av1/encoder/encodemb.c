@@ -374,7 +374,9 @@ void av1_setup_quant(TX_SIZE tx_size, int use_optimize_b, int xform_quant_idx,
   // Should have a unified function to derive quant_idx, rather than
   // determine and pass in the quant_idx
   qparam->use_optimize_b = use_optimize_b;
-  qparam->xform_quant_idx = xform_quant_idx;
+  //changed index
+  //qparam->xform_quant_idx = xform_quant_idx;
+  qparam->xform_quant_idx = 0;
 
   qparam->qmatrix = NULL;
   qparam->iqmatrix = NULL;

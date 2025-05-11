@@ -2,8 +2,7 @@ module LBS
 
 using ImageIO, FileIO, ColorTypes, ImageView, Images
 
-function encode(input_image, secret_message, output_image)
-    img = load(input_image)
+function encode(img, secret_message)
     message = secret_message
     message_bin = parse.(Int, collect(join(bitstring.(Int8.(collect(message))))))
 
@@ -28,15 +27,12 @@ function encode(input_image, secret_message, output_image)
         pixel = img[j]
         img[j] = RGBA(red(pixel), green(pixel), reinterpret(N0f8,b[j]), alpha(pixel))
     end
-
     #reshape to image shape
     reshape(img, (height, width))
-    save(output_image, img)
+    return img
 end
 
-function decode(image)
-    #load in image
-    img = load(image)
+function decode(img)
     width = size(img)[1]
     height = size(img)[2]
     reshape(img, (1, (width*height)))

@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <julia.h>
+#include <stdint.h>
 
 #include "config/aom_config.h"
 #include "config/aom_dsp_rtcd.h"
@@ -1495,38 +1496,12 @@ void av1_encode_tile(AV1_COMP *cpi, ThreadData *td, int tile_row,
  *
  * \param[in]    cpi    Top-level encoder structure
  */
+
 static inline void encode_tiles(AV1_COMP *cpi) {
   AV1_COMMON *const cm = &cpi->common;
   const int tile_cols = cm->tiles.cols;
   const int tile_rows = cm->tiles.rows;
   int tile_col, tile_row;
-
-  //Trying to read tile groups - JULIA
-  printf("encode_tiles!!");
-  //START OF JULIA EMBEDDING
-  jl_init();
-  jl_eval_string("println(\"encoding tiles\")");
-  jl_eval_string("include(\"../../../stego/syndrometrellis-code/STC.jl\")");
-  jl_eval_string("using .STC");
-  jl_value_t *test_c = jl_eval_string("@cfunction(STC.test, Float64, (Float64,))");
-
-  if (jl_exception_occurred()) {
-    printf("exception: %s\n", jl_typeof_str(jl_exception_occurred()));
-    jl_atexit_hook(0);
-    exit(1);
-  }
-  if (test_c == NULL) {
-    printf("Failed to evaluate @cfunction\n");
-    jl_atexit_hook(0);
-    exit(1);
-  }
-
-  double (*test_jl)(double) = (double (*)(double)) jl_unbox_voidpointer(test_c);
-  double ret = test_jl(11.0);
-  printf("returned from julia: %e \n", ret);
-
-  jl_atexit_hook(0);
-  //END OF JULIA EMBEDDING
 
   MACROBLOCK *const mb = &cpi->td.mb;
   assert(IMPLIES(cpi->tile_data == NULL,
