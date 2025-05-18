@@ -10,6 +10,7 @@
  */
 
 #include "av1/decoder/decodetxb.h"
+#include <stdio.h>
 
 #include "aom_ports/mem.h"
 #include "av1/common/idct.h"
@@ -137,7 +138,7 @@ static uint8_t read_coeffs_txb(const AV1_COMMON *const cm,
   uint16_t *const max_scan_line = &(eob_data->max_scan_line);
   *max_scan_line = 0;
   *eob = 0;
-
+  static int counter = 0;
 #if CONFIG_INSPECTION
   if (plane == 0) {
     const int txk_type_idx =
@@ -311,14 +312,14 @@ static uint8_t read_coeffs_txb(const AV1_COMMON *const cm,
         dq_coeff = -dq_coeff;
       }
       tcoeffs[pos] = clamp(dq_coeff, min_value, max_value);
+      printf("dq_coeff=%d ", dq_coeff);
+      counter++;
     }
   }
 
   cul_level = AOMMIN(COEFF_CONTEXT_MASK, cul_level);
 
-  // DC value
   set_dc_sign(&cul_level, dc_val);
-
   return cul_level;
 }
 

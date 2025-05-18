@@ -7,6 +7,90 @@ using .STC
 using Images, FileIO, Plots, ImageDistances, StatsPlots, Statistics, Faker, DataFrames, CSV
 gr()
 
+function difference(x, y, output_blue, output_grey)
+    img1 = load(x)
+    img2 = load(y)
+
+    diff = Float64.(abs.(Gray.(img1) - Gray.(img2)))
+    blue_diff = Float64.(abs.(blue.(img1) - blue.(img2)))
+    contrast = adjust_histogram(blue_diff, AdaptiveEqualization(nbins = 256, clip = 0.2))
+    clamped = map(clamp01nan, contrast)
+
+    save(output_blue, clamped)
+    save(output_grey, diff)
+end
+
+function lbs_extraction_rate(test_image_folder)
+    upper = 491520#419840#409600
+    interval = 71680
+    bits = [l for l in 0:interval:upper]
+    extraction_success = ones(length(bits))
+    df = DataFrame()
+    df[!, "bits"] = bits
+    cd(test_image_folder)
+    extraction_success[1] = 100
+    for i in interval:interval:upper
+        success_count = 0
+        for j in 1:10
+            image = "original_" * string(j) * ".png"
+            char_num = div(i,8)
+            x = load(image)
+            message = Faker.text(number_chars=char_num)
+            try 
+                y = LBS.encode(x, message)
+                if (LBS.decode(y)[1:length(message)] == message)
+                    success_count = success_count + 1;
+                end
+            catch 
+                println("Failed")
+            end
+            
+        end
+        extraction_success[div(i,interval)+1] = (success_count/10) * 100
+    end
+    df[!,"extraction_rate"] = extraction_success
+    cd("../plotting_data")
+    CSV.write("lbs_extraction_rate.csv", df)
+end
+
+function stc_extraction_rate(test_image_folder)
+    estimating_functions= ["blurred_noise_calculation","colour_sensitivity", "canny_edge_detection", "fourier_hard_cutoff_filtering", "fourier_soft_cutoff_filtering"]
+    upper = 419840#204800
+    interval = 71680#10240
+    bits = [l for l in 0:interval:upper]
+    df = DataFrame()
+    df[!, "bits"] = bits
+    cd(test_image_folder)
+    for f in eachindex(estimating_functions)
+        extraction_success = ones(length(bits))
+        extraction_success[1] = 100
+        for i in interval:interval:upper
+            success_count = 0
+            for j in 1:50
+                
+                image = "original_" * string(j) * ".png"
+                char_num = div(i,8)
+                x = load(image)
+                message = Faker.text(number_chars=char_num)
+                try 
+                    h_hat, y = STC.png_embed(x, message, estimating_functions[f])
+                    if (STC.png_extract(y,h_hat)[1:length(message)] == message)
+                        success_count = success_count + 1;
+                    end
+                catch
+                    println("Failed")
+                end
+            end
+            extraction_success[div(i,interval)+1] = (success_count/50) * 100
+        end
+        name = estimating_functions[f] * "extraction_rate"
+        df[!,name] = extraction_success
+        println("column_added")
+    end
+    cd("../plotting_data")
+    CSV.write("stc_extraction_rate.csv", df)
+end
+
 function lbs_png_embed(test_image_folder)
     image_nums = ["16", "28", "6", "23", "45"]
     upper = 204800
@@ -256,6 +340,28 @@ function stc_filesize_plot(csv_path)
     end
 end
 
-println(pwd())
-cd("plotting_data")
-stc_filesize_plot("stc_png_distortion.csv")
+function extraction_bar_plot()
+    cat = repeat(["LBS Algorithm", "STC Algorithms"], inner = 6)
+    lbs_data = DataFrame(CSV.File("plotting_data/lbs_extraction_rate.csv"))
+    bits = repeat(lbs_data[:, :bits], outer=2)
+    lbs_successes = lbs_data[:, :extraction_rate]
+    stc_data = DataFrame(CSV.File("plotting_data/stc_extraction_rate.csv"))
+    stc_successes = stc_data[:, :blurred_noise_calculationextraction_rate] #values identical regardless of noise calculation
+
+    groupedbar(bits, [lbs_successes stc_successes], group=cat, xlabel="Bits Embedded", ylabel="successful extractions (%)", title="Embedding in the Spatial Domain- Extraction Capability", margin=10Plots.mm, rightmargin=20Plots.mm)
+    savefig("extraction_plot.png")
+end
+
+function message_persistence()
+    x = load("plotting_data/lbs_png_28_10240.png")
+    y = load("plotting_data/lbs_png_28_10240_converted.png")
+    x2 = split(LBS.decode(x), "")[1:1280]
+    y2 = split(LBS.decode(y), "")[1:1280]
+
+    not_equal = x2 .!= y2
+    fraction_lost = sum(not_equal)/1280
+
+    println(fraction_lost)
+    return fraction_lost
+end
+

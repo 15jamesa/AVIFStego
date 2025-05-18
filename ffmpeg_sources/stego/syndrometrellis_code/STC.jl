@@ -1,9 +1,9 @@
 module STC
 
 include("/home/avajames/ffmpeg_sources/stego/embedding_cost_functions/Pixel_Weight_Functions.jl")
-using .PixelWeights
-using Images
+using .PixelWeights , Images
 
+export generate_h_hat, embed, matrix_mult, message_to_bin, bin_to_message
 #generate h_hat to be shared with sender and receiver
 function generate_h_hat(h,w)
     hat = rand([0,1],(h,w))
@@ -23,10 +23,12 @@ function embed(h_hat, x, m, rho)
     #forward step of viterbi
     w = length(h_hat)
     h = ndigits(maximum(h_hat), base=2)
+    x = x[1:w*length(m)]
     n = length(x)
     block_num = div(n, w)
     path = zeros(Bool, n, 2^h)
     y = zeros(Int8, n)
+
 
     weight = [Inf32 for n in 1:2^h]
     weight[1] = 0
@@ -68,11 +70,13 @@ function embed(h_hat, x, m, rho)
         end
         indm -= 1
     end
-    return (embedding_cost, y)
+
+    y = Int64.(y)
+    return y
 end
 
 
-#=create the sparse matrix
+#create the sparse matrix
 function expand_h_hat(h_hat, y)
     w = length(h_hat)
     h = ndigits(maximum(h_hat), base=2)
@@ -103,7 +107,7 @@ function extract(h_hat,y)
     end
     return(message)
 end
-=#
+#
 
 #get kth bit
 function get_kth_bit(k, n)

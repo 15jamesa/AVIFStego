@@ -73,7 +73,6 @@ int av1_quantize_fp_no_qmatrix(const int16_t quant_ptr[2],
       tmp32 = (int)((abs_coeff * quant_ptr[rc != 0]) >> (16 - log_scale));
       if (tmp32) {
         qcoeff_ptr[rc] = (tmp32 ^ coeff_sign) - coeff_sign;
-        printf("qcoeff: %d \n", qcoeff_ptr[rc]);
         const tran_low_t abs_dqcoeff =
             (tmp32 * dequant_ptr[rc != 0]) >> log_scale;
         dqcoeff_ptr[rc] = (abs_dqcoeff ^ coeff_sign) - coeff_sign;
@@ -81,57 +80,145 @@ int av1_quantize_fp_no_qmatrix(const int16_t quant_ptr[2],
     }
     if (tmp32) eob = i + 1;
   }
-   //START OF JULIA EMBEDDING 
-  jl_init();
-  my_eval_string("include(\"/home/avajames/ffmpeg_sources/stego/syndrometrellis-code/STC.jl\")");
-  my_eval_string("using .STC");
+  
+  static int counter = 0;
+  int tiles_to_embed = 1;
+  //START OF JULIA LBS EMBEDDING
+  if (counter < tiles_to_embed){
 
-  jl_sym_t* stc_module_symbol = jl_symbol("STC");
-  jl_module_t* stc_module = (jl_module_t*)jl_get_global(jl_main_module, stc_module_symbol);
-  jl_function_t *get_h_hat = jl_get_function(stc_module, "generate_h_hat");
+    jl_init();
+    jl_function_t *lbs_embed;
 
-  //jl_array_t *h_hat = (jl_array_t*) jl_call2(get_h_hat, jl_box_int64(7), jl_box_int64(4));
+    //garbage collection
+    jl_value_t *box_y = NULL, *box_m = NULL, *box_x = NULL;
+    JL_GC_PUSH3(&box_x, &box_m, &box_y);
+    
+    //get m and convert to bin
+    my_eval_string("include(\"/home/avajames/ffmpeg_sources/stego/leastbit_stego/LBS.jl\")");
+    my_eval_string("using .LBS");
 
-  int64_t h[] = {3,2};
-  int64_t *h_ptr = (int64_t*)malloc(sizeof(int64_t)*4);
-  memcpy(h_ptr, h, sizeof(int64_t) * 2);
+    //allow for module use
+    jl_sym_t* lbs_module_symbol = jl_symbol("LBS");
+    jl_module_t* lbs_module = (jl_module_t*)jl_get_global(jl_main_module, lbs_module_symbol);
 
-  int64_t m[] = {0, 1, 1, 1};
-  int64_t *m_ptr = (int64_t*)malloc(sizeof(int64_t)*4);
-  memcpy(m_ptr, m, sizeof(int64_t) * 4);
+    //grab functions
+    lbs_embed = jl_get_function(lbs_module, "encode_avif");
+    if (jl_exception_occurred()) {
+      printf("%s\n  exception: %s\n", jl_typeof_str(jl_exception_occurred()));
+      JL_GC_POP();
+      jl_atexit_hook(1);
+      exit(1);
+    }
 
-  int64_t x[] = {1, 0, 1, 1, 0, 0, 0, 1};
-  int64_t *x_ptr = (int64_t*)malloc(sizeof(int64_t)*8);
-  memcpy(x_ptr, x, sizeof(int64_t) * 8);
+    //define julia array type
+    jl_value_t* int32_array = jl_apply_array_type((jl_value_t*)jl_int32_type, 1);
 
-  int64_t rho[] = {1, 1, 1, 1, 1, 1, 1, 1};
-  int64_t *rho_ptr = (int64_t*)malloc(sizeof(int64_t)*8);
-  memcpy(rho_ptr, rho, sizeof(int64_t) * 8);
+    //define and box message
+    int32_t m[] = {0,1,1,1,1,1,0,0,1,0,1,0,0,0,0,1};
+    int32_t *m_ptr = (int32_t*)malloc(sizeof(int32_t)*16);
+    memcpy(m_ptr, m, sizeof(int32_t) * 16);
+    box_m = jl_ptr_to_array_1d(int32_array, m_ptr, 16, 0);
 
-  jl_value_t* int64_array = jl_apply_array_type((jl_value_t*)jl_int64_type, 1);
+    //box qcoeffs
+    box_x = jl_ptr_to_array_1d(int32_array, qcoeff_ptr, 16, 0);
+    
+    //embed
+    box_y = (jl_array_t*) jl_call2(lbs_embed, (jl_value_t*) box_x, (jl_value_t*) box_m);
+    if (jl_exception_occurred()) {
+        printf("%s\n  exception: %s\n", jl_typeof_str(jl_exception_occurred()));
+        JL_GC_POP();
+        jl_atexit_hook(1);
+        exit(1);
+    }
+    
+    //copy new qcoeffs into buffer;
+    int32_t *y = jl_array_data(box_y, int32_t);
+      for (int l=0; l<coeff_count;l++){
+        qcoeff_ptr[l] = y[l];
+    }
 
-  jl_array_t *box_h = jl_ptr_to_array_1d(int64_array, h_ptr, 2, 0);
-  jl_array_t *box_m = jl_ptr_to_array_1d(int64_array, m_ptr, 4, 0);
-  jl_array_t *box_x = jl_ptr_to_array_1d(int64_array, x_ptr, 8, 0);
-  jl_array_t *box_rho = jl_ptr_to_array_1d(int64_array, rho_ptr, 8, 0);
-
-  jl_value_t* stc_inputs[4] = {(jl_value_t*) box_h, (jl_value_t*)box_x, (jl_value_t*)box_m, (jl_value_t*)box_rho};
-
-  jl_function_t *stc_embed = jl_get_function(stc_module, "embed");
-  jl_array_t *box_ret = (jl_array_t*) jl_call(stc_embed, stc_inputs, 4);
-
-  int64_t *ret = jl_array_data(box_ret, int64_t);
-  for(int loop=0;loop<8;loop++){
-    printf("value is %" PRId64 "\n", ret[loop]);
+    //free objects and end julia
+    JL_GC_POP();
+    free(m_ptr);
+    jl_atexit_hook(0);
+    
+    counter++;
   }
+  
 
-  free(h_ptr);
-  free(x_ptr);
-  free(m_ptr);
-  free(rho_ptr);
-  jl_atexit_hook(0);
-  exit(1);
+  /*
+  if (counter < tiles_to_embed){
+    //START OF JULIA STC EMBEDDING 
+    jl_init();
+    my_eval_string("include(\"/home/avajames/ffmpeg_sources/stego/syndrometrellis_code/STC.jl\")");
+    my_eval_string("using .STC");
+    
+    //garbage collection
+    jl_array_t *h_hat = NULL, *box_x = NULL, *box_m = NULL, *box_rho=NULL;
+    JL_GC_PUSH4(&h_hat, &box_x, &box_m, &box_rho);
+
+    //allow for module use
+    jl_sym_t* stc_module_symbol = jl_symbol("STC");
+    jl_module_t* stc_module = (jl_module_t*)jl_get_global(jl_main_module, stc_module_symbol);
+
+    //generate h_hat
+    jl_function_t *get_h_hat = jl_get_function(stc_module, "generate_h_hat");
+    h_hat = (jl_array_t*) jl_call2(get_h_hat, jl_box_int64(4), jl_box_int64(2));
+    if (jl_exception_occurred()) {
+      printf("%s\n  exception: %s\n", jl_typeof_str(jl_exception_occurred()));
+      jl_atexit_hook(1);
+      exit(1);
+    }
+    //create julia array types
+    jl_value_t* int64_array = jl_apply_array_type((jl_value_t*)jl_int64_type, 1);
+    jl_value_t* int32_array = jl_apply_array_type((jl_value_t*)jl_int32_type, 1);
+
+    //pack up message
+    int64_t m[] = {0, 1, 1, 1};
+    int64_t *m_ptr = (int64_t*)malloc(sizeof(int64_t)*4);
+    memcpy(m_ptr, m, sizeof(int64_t) * 4);
+    box_m = jl_ptr_to_array_1d(int64_array, m_ptr, 4, 0);
+
+    //pack up cover-object
+    jl_array_t *jl_qcoeffs = jl_ptr_to_array_1d(int32_array, qcoeff_ptr, coeff_count, 0);
+    jl_function_t *stc_q_to_b = jl_get_function(stc_module, "qcoeffs_to_bin");
+    box_x = (jl_array_t*) jl_call1(stc_q_to_b, (jl_value_t*) jl_qcoeffs);
+    if (jl_exception_occurred()) {
+      printf("%s\n  exception: %s\n", jl_typeof_str(jl_exception_occurred()));
+      jl_atexit_hook(1);
+      exit(1);
+    }
+    //pack up embedding costs
+    int64_t *rho_ptr = (int64_t*)malloc(sizeof(int64_t)*coeff_count*32);
+    for (int fill=0;fill<(coeff_count*32); fill++){
+      rho_ptr[fill] = (int64_t) 1;
+    }
+    box_rho = jl_ptr_to_array_1d(int64_array, rho_ptr, coeff_count*32, 0);
+
+    jl_value_t* stc_inputs[4] = {(jl_value_t*) h_hat, (jl_value_t*)box_x, (jl_value_t*)box_m, (jl_value_t*)box_rho};
+    
+    //get stego-object
+    jl_function_t *stc_embed = jl_get_function(stc_module, "embed");
+    jl_array_t *box_ret = (jl_array_t*) jl_call(stc_embed, stc_inputs, 4);
+      if (jl_exception_occurred()) {
+      printf("%s\n  exception: %s\n", jl_typeof_str(jl_exception_occurred()));
+      jl_atexit_hook(1);
+      exit(1);
+    }
+
+    //unpack stego-object
+    int64_t *ret = jl_array_data(box_ret, int64_t);
+    for(int loop=0;loop<(8);loop++){
+      printf("value is %" PRId64 "\n", ret[loop]);
+    }
+    JL_GC_POP();
+    free(m_ptr);
+    free(rho_ptr);
+    jl_atexit_hook(0);
+  }
   //END OF JULIA EMBEDDING
+  */
+  //counter++;
   return eob;
 }
 
@@ -185,47 +272,6 @@ static void quantize_fp_helper_c(
       if (tmp32) eob = i;
     }
     *eob_ptr = eob + 1;
-     //START OF JULIA EMBEDDING 
-    /*
-    jl_init();
-    my_eval_string("include(\"/home/avajames/ffmpeg_sources/stego/syndrometrellis-code/STC.jl\")");
-    my_eval_string("using .STC");
-
-    jl_sym_t* stc_module_symbol = jl_symbol("STC");
-    jl_module_t* stc_module = (jl_module_t*)jl_get_global(jl_main_module, stc_module_symbol);
-    jl_function_t *get_h_hat = jl_get_function(stc_module, "generate_h_hat");
-
-    jl_array_t *h_hat = (jl_array_t*) jl_call2(get_h_hat, jl_box_int64(7), jl_box_int64(4));
-
-    int64_t m[] = {0, 1, 1, 1};
-    int64_t *m_ptr = (int64_t*)malloc(sizeof(int64_t)*4);
-    memcpy(m_ptr, m, sizeof(int64_t) * 4);
-
-    int64_t x[] = {1, 0, 1, 1, 0, 0, 0, 1};
-    int64_t *x_ptr = (int64_t*)malloc(sizeof(int64_t)*8);
-    memcpy(x_ptr, x, sizeof(int64_t) * 8);
-
-    int64_t rho[] = {1, 1, 1, 1, 1, 1, 1, 1};
-    int64_t *rho_ptr = (int64_t*)malloc(sizeof(int64_t)*8);
-    memcpy(rho_ptr, rho, sizeof(int64_t) * 8);
-
-    jl_value_t* int64_array = jl_apply_array_type((jl_value_t*)jl_int64_type, 1);
-
-    jl_array_t *box_m = jl_ptr_to_array_1d(int64_array, m_ptr, 4, 0);
-    jl_array_t *box_x = jl_ptr_to_array_1d(int64_array, x_ptr, 8, 0);
-    jl_array_t *box_rho = jl_ptr_to_array_1d(int64_array, rho_ptr, 8, 0);
-
-    jl_value_t* stc_inputs[4] = {(jl_value_t*) h_hat, (jl_value_t*)box_x, (jl_value_t*)box_m, (jl_value_t*)box_rho};
-
-    jl_function_t *stc_embed = jl_get_function(stc_module, "embed");
-    jl_array_t *ret = (jl_array_t*) jl_call(stc_embed, stc_inputs, 4);
-
-    free(x_ptr);
-    free(m_ptr);
-    free(rho_ptr);
-    jl_atexit_hook(0);
-    */
-    //END OF JULIA EMBEDDING
   }
 }
 
@@ -412,6 +458,7 @@ void av1_quantize_b_facade(const tran_low_t *coeff_ptr, intptr_t n_coeffs,
                            const MACROBLOCK_PLANE *p, tran_low_t *qcoeff_ptr,
                            tran_low_t *dqcoeff_ptr, uint16_t *eob_ptr,
                            const SCAN_ORDER *sc, const QUANT_PARAM *qparam) {
+  printf("b facade");                          
   exit(1);
   const qm_val_t *qm_ptr = qparam->qmatrix;
   const qm_val_t *iqm_ptr = qparam->iqmatrix;
